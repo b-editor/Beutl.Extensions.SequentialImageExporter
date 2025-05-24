@@ -1,0 +1,10 @@
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    </PropertyGroup>
+    <ItemGroup>
+        <PackageVersion Include="Beutl.Extensibility" Version="1.0.0" />
+        <PackageVersion Include="Beutl.ProjectSystem" Version="1.0.0" />
+        <PackageVersion Include="Beutl.Operators" Version="1.0.0" />
+    </ItemGroup>
+</Project>  
