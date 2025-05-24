@@ -4,7 +4,7 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <Nullable>enable</Nullable>
         <PackageId>Beutl.Extensions.SequentialImageExporter</PackageId>
-        <Title>Sequential Image Exporter</Title>
+        <Title>連番画像エクスポーター</Title>
         <Description>連番画像を出力します</Description>
         <PackageTags>encoder,encode,sequential,image,exporter</PackageTags>
         <Version>1.0.0</Version>
