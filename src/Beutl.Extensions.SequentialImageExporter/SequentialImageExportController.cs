@@ -61,11 +61,12 @@ public class SequentialImageExportController : EncodingController
         }
     }
 
-    private void Save(Bitmap<Bgra8888> bitmap, string filePath, string extension)
+    private void Save(Bitmap bitmap, string filePath, string extension)
     {
+        using var converted = bitmap.Convert(BitmapColorType.Bgra8888, BitmapAlphaType.Premul, BitmapColorSpace.Srgb);
         using var skPixmap = new SKPixmap(
-            new(bitmap.Width, bitmap.Height, SKColorType.Bgra8888),
-            bitmap.Data);
+            new(converted.Width, converted.Height, SKColorType.Bgra8888, SKAlphaType.Premul, SKColorSpace.CreateSrgb()),
+            converted.Data);
 
         var data = extension switch
         {
