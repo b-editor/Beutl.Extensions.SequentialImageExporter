@@ -7,6 +7,7 @@
         <Version>2.0.1</Version>
         <AssemblyVersion>2.0.1.0</AssemblyVersion>
         <Authors>Yuto Terada</Authors>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <BeutlAutoReferenceSourceGenerators>false</BeutlAutoReferenceSourceGenerators>
     </PropertyGroup>
 
