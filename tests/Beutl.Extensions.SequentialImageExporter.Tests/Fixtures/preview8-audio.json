@@ -1,0 +1,9 @@
+{
+  "SampleRate": 44100,
+  "Channels": 2,
+  "Bitrate": 128000,
+  "CodecOptions": null,
+  "Id": "dcaaf876-b67b-4bae-94c0-95cb6ced6352",
+  "Name": "",
+  "$type": "[Beutl.Extensions.SequentialImageExporter]:SequentialImageExportAudioSettings"
+}

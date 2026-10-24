@@ -49,14 +49,15 @@ public class SequentialImageExportController : EncodingController
 
         var digits = (int)Math.Log10(frameProvider.FrameCount) + 1;
 
-        for (var i = 0; i < frameProvider.FrameCount; i++)
+        for (long i = 0; i < frameProvider.FrameCount; i++)
         {
             if (cancellationToken.IsCancellationRequested) break;
 
             var fileName = $"{fileNameWithoutExtension}_{i.ToString().PadLeft(digits, '0')}{extension}";
             var filePath = Path.Combine(directory, fileName);
 
-            using var frame = await frameProvider.RenderFrame(i).ConfigureAwait(false);
+            using var frame = await frameProvider.ReadNextFrame().ConfigureAwait(false)
+                ?? throw new InvalidOperationException("The frame provider ended before its frame count.");
             await Task.Run(() => Save(frame, filePath, extension), cancellationToken);
         }
     }
@@ -71,18 +72,18 @@ public class SequentialImageExportController : EncodingController
         var data = extension switch
         {
             ".png" => skPixmap.Encode(new SKPngEncoderOptions(
-                VideoSettings.PngFilterFlags.ToSkiaFlags(),
-                VideoSettings.PngzLibLevel)),
+                VideoSettings.PngFilterFlags.Value.ToSkiaFlags(),
+                VideoSettings.PngzLibLevel.Value)),
             ".jpg" or ".jpeg" => skPixmap.Encode(new SKJpegEncoderOptions(
-                (int)VideoSettings.Quality,
-                VideoSettings.JpegDownsample,
-                VideoSettings.JpegAlphaOption)),
+                (int)VideoSettings.Quality.Value,
+                VideoSettings.JpegDownsample.Value,
+                VideoSettings.JpegAlphaOption.Value)),
             ".webp" => skPixmap.Encode(new SKWebpEncoderOptions(
-                VideoSettings.WebpCompression,
-                VideoSettings.Quality)),
+                VideoSettings.WebpCompression.Value,
+                VideoSettings.Quality.Value)),
             _ => skPixmap.Encode(
                 (SKEncodedImageFormat)ExtensionToFormat[extension],
-                (int)VideoSettings.Quality)
+                (int)VideoSettings.Quality.Value)
         };
 
         if (data == null)
@@ -97,4 +98,6 @@ public class SequentialImageExportController : EncodingController
     public override SequentialImageExportSettings VideoSettings { get; }
 
     public override AudioEncoderSettings AudioSettings { get; }
+
+    public override bool IsAudioEnabled => false;
 }
