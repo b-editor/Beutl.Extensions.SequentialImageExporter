@@ -3,15 +3,22 @@ using Beutl.Media.Encoding;
 
 namespace Beutl.Extensions.SequentialImageExporter;
 
-public class SequentialImageExportAudioSettings : AudioEncoderSettings
+public partial class SequentialImageExportAudioSettings : AudioEncoderSettings
 {
-    static SequentialImageExportAudioSettings()
+    public SequentialImageExportAudioSettings()
     {
-        BitrateProperty.OverrideMetadata<SequentialImageExportAudioSettings>(
-            new CorePropertyMetadata<int>(shouldSerialize: false, attributes: new BrowsableAttribute(false)));
-        SampleRateProperty.OverrideMetadata<SequentialImageExportAudioSettings>(
-            new CorePropertyMetadata<int>(shouldSerialize: false, attributes: new BrowsableAttribute(false)));
-        ChannelsProperty.OverrideMetadata<SequentialImageExportAudioSettings>(
-            new CorePropertyMetadata<int>(shouldSerialize: false, attributes: new BrowsableAttribute(false)));
+        ScanProperties<SequentialImageExportAudioSettings>();
     }
+
+    [Browsable(false)]
+    [NotAutoSerialized]
+    public new IProperty<int> Bitrate => base.Bitrate;
+
+    [Browsable(false)]
+    [NotAutoSerialized]
+    public new IProperty<int> SampleRate => base.SampleRate;
+
+    [Browsable(false)]
+    [NotAutoSerialized]
+    public new IProperty<int> Channels => base.Channels;
 }
