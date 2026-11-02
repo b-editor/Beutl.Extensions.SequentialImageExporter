@@ -1,6 +1,13 @@
+using System.Reactive.Subjects;
+using System.Reflection;
 using Beutl.Audio;
 using Beutl.Extensibility;
+using Beutl.Graphics.Backend;
+using Beutl.Graphics.Rendering;
+using Beutl.Graphics.Shapes;
 using Beutl.Media;
+using Beutl.Models;
+using Beutl.ProjectSystem;
 using SkiaSharp;
 
 namespace Beutl.Extensions.SequentialImageExporter.Tests;
@@ -109,10 +116,137 @@ public class ExportTests
         Assert.That(samples.IsDisposed, Is.False);
     }
 
+    // Renders a real scene and exports it the way Beutl's OutputViewModel does.
+    [Test]
+    public async Task StagedExport_PublishesRenderedFrames()
+    {
+        if (!RenderThread.Dispatcher.Invoke(() => GraphicsContextFactory.GetOrCreateShared() is not null))
+            Assert.Ignore("No graphics context is available on this host.");
+
+        var rate = new Rational(30);
+        Color[] colors = [Colors.Red, Colors.Lime, Colors.Blue];
+        var scene = new Scene(64, 32, "Export") { Duration = { Value = MediaTime.FromFrames(colors.Length, rate) } };
+        for (int i = 0; i < colors.Length; i++)
+        {
+            var element = new Element
+            {
+                Start = { Value = MediaTime.FromFrames(i, rate) },
+                Length = { Value = MediaTime.FromFrames(1, rate) },
+            };
+            element.AddObject(new RectShape
+            {
+                Width = { Value = 32 },
+                Height = { Value = 16 },
+                Fill = { Value = new SolidColorBrush(colors[i]) },
+            });
+            scene.AddChild(element);
+        }
+
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
+        {
+            var controller = new SequentialImageExporterExtension().CreateController(output.TemporaryPath);
+            using var renderer = ExportRendererFactory.Create(scene);
+            using var progress = new Subject<MediaTime>();
+            using var frames = new FrameProviderImpl(scene, rate, renderer, progress);
+            using var samples = new UnusedSampleProvider();
+
+            await controller.Encode(frames, samples, CancellationToken.None);
+            output.Commit(CancellationToken.None);
+        }
+
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName),
+            Is.EquivalentTo(new[] { "frame.png", "frame_0.png", "frame_1.png", "frame_2.png" }));
+        for (int i = 0; i < colors.Length; i++)
+        {
+            using var decoded = SKBitmap.Decode(Path.Combine(directory, $"frame_{i}.png"));
+            Assert.That((decoded.Width, decoded.Height), Is.EqualTo((64, 32)));
+            var center = decoded.GetPixel(32, 16);
+            Assert.That((center.Red, center.Green, center.Blue, center.Alpha),
+                Is.EqualTo((colors[i].R, colors[i].G, colors[i].B, (byte)255)));
+        }
+
+        Assert.That(File.ReadAllBytes(Path.Combine(directory, "frame.png")),
+            Is.EqualTo(File.ReadAllBytes(Path.Combine(directory, "frame_0.png"))));
+    }
+
+    [Test]
+    public async Task StagedExport_ReplacesAnEarlierExport()
+    {
+        string[] names = ["frame.png", "frame_0.png", "frame_1.png"];
+        foreach (string name in names)
+            File.WriteAllText(Path.Combine(directory, name), "earlier export");
+        using var frames = new FrameProvider(2);
+        using var samples = new UnusedSampleProvider();
+
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
+        {
+            await new SequentialImageExportController(output.TemporaryPath)
+                .Encode(frames, samples, CancellationToken.None);
+            output.Commit(CancellationToken.None);
+        }
+
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EquivalentTo(names));
+        using var first = SKBitmap.Decode(Path.Combine(directory, "frame_0.png"));
+        using var second = SKBitmap.Decode(Path.Combine(directory, "frame_1.png"));
+        Assert.That((first.GetPixel(0, 0).Red, second.GetPixel(0, 0).Red), Is.EqualTo(((byte)0, (byte)16)));
+        Assert.That(File.ReadAllBytes(Path.Combine(directory, "frame.png")),
+            Is.EqualTo(File.ReadAllBytes(Path.Combine(directory, "frame_0.png"))));
+    }
+
+    [Test]
+    public async Task StagedExport_CancelledBetweenFramesPublishesNothing()
+    {
+        string destination = Path.Combine(directory, "frame.png");
+        File.WriteAllText(destination, "earlier export");
+        using var cancellation = new CancellationTokenSource();
+        using var frames = new FrameProvider(3)
+        {
+            BeforeFrameCount = reads =>
+            {
+                if (reads == 1) cancellation.Cancel();
+            }
+        };
+        using var samples = new UnusedSampleProvider();
+
+        using (var output = new StagedOutput(destination))
+        {
+            await new SequentialImageExportController(output.TemporaryPath)
+                .Encode(frames, samples, cancellation.Token);
+            Assert.Throws<OperationCanceledException>(() => output.Commit(cancellation.Token));
+        }
+
+        Assert.That(frames.ReadCount, Is.EqualTo(1));
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EqualTo(new[] { "frame.png" }));
+        Assert.That(File.ReadAllText(destination), Is.EqualTo("earlier export"));
+    }
+
+    // Beutl's export writes through this internal type, so the tests use the real one and fail if its contract changes.
+    private sealed class StagedOutput(string destination) : IDisposable
+    {
+        private static readonly Type OutputType = typeof(CoreObject).Assembly.GetType("Beutl.IO.StagedOutputFile", true)!;
+        private readonly IDisposable output = (IDisposable)Activator.CreateInstance(OutputType, destination)!;
+
+        public string TemporaryPath => (string)OutputType.GetProperty(nameof(TemporaryPath))!.GetValue(output)!;
+
+        public void Commit(CancellationToken cancellationToken)
+            => OutputType.GetMethod(nameof(Commit))!.Invoke(output, BindingFlags.DoNotWrapExceptions, null, [cancellationToken], null);
+
+        public void Dispose() => output.Dispose();
+    }
+
     private sealed class FrameProvider(long frameCount) : IFrameProvider
     {
-        public long FrameCount => frameCount;
+        public long FrameCount
+        {
+            get
+            {
+                BeforeFrameCount?.Invoke(ReadCount);
+                return frameCount;
+            }
+        }
+
         public Rational FrameRate => new(30, 1);
+        public Action<int>? BeforeFrameCount { get; init; }
         public int EndAfter { get; init; } = int.MaxValue;
         public Action? OnRead { get; init; }
         public int ReadCount { get; private set; }
