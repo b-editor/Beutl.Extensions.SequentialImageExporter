@@ -1,11 +1,11 @@
-﻿<Project Sdk="Beutl.Extensibility.Sdk/2.0.0-preview.10">
+﻿<Project Sdk="Beutl.Extensibility.Sdk/2.0.0-preview.11">
     <PropertyGroup>
         <PackageId>Beutl.Extensions.SequentialImageExporter</PackageId>
         <Title>連番画像エクスポーター</Title>
         <Description>連番画像を出力します</Description>
         <PackageTags>encoder,encode,sequential,image,exporter</PackageTags>
-        <Version>2.0.3</Version>
-        <AssemblyVersion>2.0.3.0</AssemblyVersion>
+        <Version>2.0.4</Version>
+        <AssemblyVersion>2.0.4.0</AssemblyVersion>
         <Authors>Yuto Terada</Authors>
         <PackageLicenseExpression>MIT</PackageLicenseExpression>
         <BeutlAutoReferenceSourceGenerators>false</BeutlAutoReferenceSourceGenerators>
@@ -16,7 +16,7 @@
             Include="Beutl.Engine.SourceGenerators"
             OutputItemType="Analyzer"
             ReferenceOutputAssembly="false"
-            Version="2.0.0-preview.10"
+            Version="2.0.0-preview.11"
             PrivateAssets="all" />
     </ItemGroup>
 

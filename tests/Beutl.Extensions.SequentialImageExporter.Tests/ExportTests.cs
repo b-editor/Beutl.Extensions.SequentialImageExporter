@@ -45,6 +45,8 @@ public class ExportTests
 
         Assert.That(Directory.GetFiles(directory).Select(Path.GetFileName),
             Is.EquivalentTo(Enumerable.Range(0, 12).Select(i => $"frame_{i:D2}{extension}")));
+        Assert.That(controller.OutputFiles,
+            Is.EqualTo(Enumerable.Range(0, 12).Select(i => Path.Combine(directory, $"frame_{i:D2}{extension}"))));
         for (int i = 0; i < 12; i++)
         {
             using var decoded = SKBitmap.Decode(Path.Combine(directory, $"frame_{i:D2}{extension}"));
@@ -94,6 +96,7 @@ public class ExportTests
 
         Assert.That(frames.ReadCount, Is.Zero);
         Assert.That(Directory.GetFiles(directory), Is.Empty);
+        Assert.That(controller.OutputFiles, Is.Empty);
         Assert.That(frames.IsDisposed, Is.False);
         Assert.That(samples.IsDisposed, Is.False);
     }
@@ -142,6 +145,7 @@ public class ExportTests
             scene.AddChild(element);
         }
 
+        IReadOnlyList<string> published;
         using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
         {
             var controller = new SequentialImageExporterExtension().CreateController(output.TemporaryPath);
@@ -151,11 +155,12 @@ public class ExportTests
             using var samples = new UnusedSampleProvider();
 
             await controller.Encode(frames, samples, CancellationToken.None);
-            output.Commit(CancellationToken.None);
+            published = output.Commit(controller.OutputFiles, CancellationToken.None);
         }
 
-        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName),
-            Is.EquivalentTo(new[] { "frame.png", "frame_0.png", "frame_1.png", "frame_2.png" }));
+        string[] names = ["frame_0.png", "frame_1.png", "frame_2.png"];
+        Assert.That(published, Is.EqualTo(names.Select(name => Path.Combine(directory, name))));
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EquivalentTo(names));
         for (int i = 0; i < colors.Length; i++)
         {
             using var decoded = SKBitmap.Decode(Path.Combine(directory, $"frame_{i}.png"));
@@ -164,9 +169,6 @@ public class ExportTests
             Assert.That((center.Red, center.Green, center.Blue, center.Alpha),
                 Is.EqualTo((colors[i].R, colors[i].G, colors[i].B, (byte)255)));
         }
-
-        Assert.That(File.ReadAllBytes(Path.Combine(directory, "frame.png")),
-            Is.EqualTo(File.ReadAllBytes(Path.Combine(directory, "frame_0.png"))));
     }
 
     [Test]
@@ -180,24 +182,24 @@ public class ExportTests
 
         using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
         {
-            await new SequentialImageExportController(output.TemporaryPath)
-                .Encode(frames, samples, CancellationToken.None);
-            output.Commit(CancellationToken.None);
+            var controller = new SequentialImageExportController(output.TemporaryPath);
+            await controller.Encode(frames, samples, CancellationToken.None);
+            output.Commit(controller.OutputFiles, CancellationToken.None);
         }
 
         Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EquivalentTo(names));
         using var first = SKBitmap.Decode(Path.Combine(directory, "frame_0.png"));
         using var second = SKBitmap.Decode(Path.Combine(directory, "frame_1.png"));
         Assert.That((first.GetPixel(0, 0).Red, second.GetPixel(0, 0).Red), Is.EqualTo(((byte)0, (byte)16)));
-        Assert.That(File.ReadAllBytes(Path.Combine(directory, "frame.png")),
-            Is.EqualTo(File.ReadAllBytes(Path.Combine(directory, "frame_0.png"))));
+        // 2.0.3 left a copy of the first frame under the name the user chose, which an export no longer writes.
+        Assert.That(File.ReadAllText(Path.Combine(directory, "frame.png")), Is.EqualTo("earlier export"));
     }
 
     [Test]
     public async Task StagedExport_CancelledBetweenFramesPublishesNothing()
     {
-        string destination = Path.Combine(directory, "frame.png");
-        File.WriteAllText(destination, "earlier export");
+        string earlierFrame = Path.Combine(directory, "frame_0.png");
+        File.WriteAllText(earlierFrame, "earlier export");
         using var cancellation = new CancellationTokenSource();
         using var frames = new FrameProvider(3)
         {
@@ -208,17 +210,88 @@ public class ExportTests
         };
         using var samples = new UnusedSampleProvider();
 
-        using (var output = new StagedOutput(destination))
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
         {
-            await new SequentialImageExportController(output.TemporaryPath)
-                .Encode(frames, samples, cancellation.Token);
-            Assert.Throws<OperationCanceledException>(() => output.Commit(cancellation.Token));
+            var controller = new SequentialImageExportController(output.TemporaryPath);
+            await controller.Encode(frames, samples, cancellation.Token);
+            Assert.Throws<OperationCanceledException>(() => output.Commit(controller.OutputFiles, cancellation.Token));
         }
 
         Assert.That(frames.ReadCount, Is.EqualTo(1));
-        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EqualTo(new[] { "frame.png" }));
-        Assert.That(File.ReadAllText(destination), Is.EqualTo("earlier export"));
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EqualTo(new[] { "frame_0.png" }));
+        Assert.That(File.ReadAllText(earlierFrame), Is.EqualTo("earlier export"));
     }
+
+    // As in OutputViewModel, a failed Encode never reaches Commit, and disposing the staged output deletes its frames.
+    [Test]
+    public async Task StagedExport_FailedEncodeLeavesAnEarlierExportAlone()
+    {
+        string[] names = ["frame_0.png", "frame_1.png", "frame_2.png"];
+        foreach (string name in names)
+            File.WriteAllText(Path.Combine(directory, name), "earlier export");
+        using var frames = new FrameProvider(3) { EndAfter = 2 };
+        using var samples = new UnusedSampleProvider();
+
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
+        {
+            var controller = new SequentialImageExportController(output.TemporaryPath);
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => controller.Encode(frames, samples, CancellationToken.None).AsTask());
+        }
+
+        Assert.That(frames.ReadCount, Is.EqualTo(3));
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName), Is.EquivalentTo(names));
+        Assert.That(names.Select(name => File.ReadAllText(Path.Combine(directory, name))), Is.All.EqualTo("earlier export"));
+    }
+
+    // A folder in the way of the second frame stops the publication after the first frame replaced the earlier one.
+    [Test]
+    public async Task StagedExport_FailedPublicationPutsBackAnEarlierExport()
+    {
+        File.WriteAllText(Path.Combine(directory, "frame_0.png"), "earlier export");
+        Directory.CreateDirectory(Path.Combine(directory, "frame_1.png"));
+        using var frames = new FrameProvider(3);
+        using var samples = new UnusedSampleProvider();
+
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
+        {
+            var controller = new SequentialImageExportController(output.TemporaryPath);
+            await controller.Encode(frames, samples, CancellationToken.None);
+            Assert.Catch(() => output.Commit(controller.OutputFiles, CancellationToken.None));
+        }
+
+        Assert.That(Directory.GetFileSystemEntries(directory).Select(Path.GetFileName),
+            Is.EquivalentTo(new[] { "frame_0.png", "frame_1.png" }));
+        Assert.That(File.ReadAllText(Path.Combine(directory, "frame_0.png")), Is.EqualTo("earlier export"));
+    }
+
+    // What the output tab shows as the size: while frames are written, that of the files in the staging folder when
+    // each frame is read, and once they are published, that of each file Commit returns.
+    [Test]
+    public async Task StagedExport_OutputTabSizeCountsEveryFrame()
+    {
+        var sizesWhileWriting = new List<long>();
+        IReadOnlyList<string> published;
+        using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
+        {
+            var staging = new DirectoryInfo(Path.GetDirectoryName(output.TemporaryPath)!);
+            using var frames = new FrameProvider(3)
+            {
+                OnRead = () => sizesWhileWriting.Add(SizeOf(staging.EnumerateFiles()))
+            };
+            using var samples = new UnusedSampleProvider();
+            var controller = new SequentialImageExportController(output.TemporaryPath);
+
+            await controller.Encode(frames, samples, CancellationToken.None);
+            published = output.Commit(controller.OutputFiles, CancellationToken.None);
+        }
+
+        FileInfo[] written = [.. Enumerable.Range(0, 3).Select(i => new FileInfo(Path.Combine(directory, $"frame_{i}.png")))];
+        Assert.That(sizesWhileWriting, Is.EqualTo(new[] { 0, SizeOf(written[..1]), SizeOf(written[..2]) }));
+        Assert.That(SizeOf(published.Select(path => new FileInfo(path))), Is.EqualTo(SizeOf(written)));
+    }
+
+    private static long SizeOf(IEnumerable<FileInfo> files) => files.Sum(file => file.Length);
 
     // Beutl's export writes through this internal type, so the tests use the real one and fail if its contract changes.
     private sealed class StagedOutput(string destination) : IDisposable
@@ -228,8 +301,11 @@ public class ExportTests
 
         public string TemporaryPath => (string)OutputType.GetProperty(nameof(TemporaryPath))!.GetValue(output)!;
 
-        public void Commit(CancellationToken cancellationToken)
-            => OutputType.GetMethod(nameof(Commit))!.Invoke(output, BindingFlags.DoNotWrapExceptions, null, [cancellationToken], null);
+        // OutputViewModel passes EncodingController.OutputFiles and reads the size from the files this returns.
+        public IReadOnlyList<string> Commit(IReadOnlyList<string> files, CancellationToken cancellationToken)
+            => (IReadOnlyList<string>)OutputType
+                .GetMethod(nameof(Commit), [typeof(IReadOnlyList<string>), typeof(CancellationToken)])!
+                .Invoke(output, BindingFlags.DoNotWrapExceptions, null, [files, cancellationToken], null)!;
 
         public void Dispose() => output.Dispose();
     }

@@ -11,8 +11,6 @@ namespace Beutl.Extensions.SequentialImageExporter;
 
 public class SequentialImageExportController : EncodingController
 {
-    private const string StagingDirectoryPrefix = ".beutl-output-";
-
     private static readonly FrozenDictionary<string, EncodedImageFormat> ExtensionToFormat = ImmutableCollectionsMarshal
         .AsImmutableArray<KeyValuePair<string, EncodedImageFormat>>(
         [
@@ -31,16 +29,23 @@ public class SequentialImageExportController : EncodingController
             new(".heif", EncodedImageFormat.Heif)
         ]).ToFrozenDictionary();
 
+    private readonly List<string> outputFiles = [];
+
     public SequentialImageExportController(string outputFile) : base(outputFile)
     {
         VideoSettings = new SequentialImageExportSettings();
         AudioSettings = new SequentialImageExportAudioSettings();
     }
 
+    // The frames Encode wrote, in order, which Beutl moves to the folder the user chose. The file the user named only
+    // gives their names, so it is not written.
+    public override IReadOnlyList<string> OutputFiles => outputFiles;
+
     public override async ValueTask Encode(
         IFrameProvider frameProvider, ISampleProvider sampleProvider,
         CancellationToken cancellationToken)
     {
+        outputFiles.Clear();
         var directory = Path.GetDirectoryName(OutputFile);
         if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
             throw new DirectoryNotFoundException($"The directory '{directory}' does not exist.");
@@ -61,29 +66,7 @@ public class SequentialImageExportController : EncodingController
             using var frame = await frameProvider.ReadNextFrame().ConfigureAwait(false)
                 ?? throw new InvalidOperationException("The frame provider ended before its frame count.");
             await Task.Run(() => Save(frame, filePath, extension), cancellationToken);
-        }
-
-        if (!cancellationToken.IsCancellationRequested
-            && Path.GetFileName(directory).StartsWith(StagingDirectoryPrefix, StringComparison.Ordinal))
-        {
-            PublishFromStaging(directory);
-        }
-    }
-
-    // Beutl's export passes a path inside a staging directory beside the destination. After Encode it moves only
-    // OutputFile out and deletes the directory with everything else, so the frames have to leave here, and a copy of
-    // the first frame stands in for OutputFile.
-    private void PublishFromStaging(string stagingDirectory)
-    {
-        var frames = Directory.GetFiles(stagingDirectory);
-        if (frames.Min(StringComparer.Ordinal) is not { } firstFrame) return;
-
-        File.Copy(firstFrame, OutputFile);
-
-        var destination = Path.GetDirectoryName(stagingDirectory)!;
-        foreach (var frame in frames)
-        {
-            File.Move(frame, Path.Combine(destination, Path.GetFileName(frame)), overwrite: true);
+            outputFiles.Add(filePath);
         }
     }
 
