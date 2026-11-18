@@ -1,6 +1,7 @@
 using System.Reactive.Subjects;
 using System.Reflection;
 using Beutl.Audio;
+using Beutl.Configuration;
 using Beutl.Extensibility;
 using Beutl.Graphics.Backend;
 using Beutl.Graphics.Rendering;
@@ -145,11 +146,16 @@ public class ExportTests
             scene.AddChild(element);
         }
 
+        // The scene draws no text, so the renderer needs no installed fonts.
+        var fontConfig = new FontConfig();
+        fontConfig.FontDirectories.Clear();
+        var fonts = new FontManager(fontConfig);
+
         IReadOnlyList<string> published;
         using (var output = new StagedOutput(Path.Combine(directory, "frame.png")))
         {
             var controller = new SequentialImageExporterExtension().CreateController(output.TemporaryPath);
-            using var renderer = ExportRendererFactory.Create(scene);
+            using var renderer = ExportRendererFactory.Create(scene, fonts);
             using var progress = new Subject<MediaTime>();
             using var frames = new FrameProviderImpl(scene, rate, renderer, progress);
             using var samples = new UnusedSampleProvider();
